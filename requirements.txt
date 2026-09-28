@@ -1,0 +1,11 @@
+# ingest + matching are stdlib only
+numpy>=1.26
+scipy>=1.11
+
+# the API
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart        # multipart upload of the export zip
+httpx>=0.27             # TMDB metadata (and the test transport)
+
+pytest>=8.0

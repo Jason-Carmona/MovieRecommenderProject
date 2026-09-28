@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "scripts/serve.py",
+        "--model", "data/processed/demo-model.npz",
+        "--catalog", "tests/fixtures/movielens",
+        "--port", "8000"
+      ],
+      "port": 8000,
+      "url": "http://localhost:8000"
+    }
+  ]
+}
