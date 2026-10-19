@@ -269,6 +269,31 @@ def test_tmdb_being_down_does_not_break_the_recommendations(client, export_zip, 
     assert all(f["poster_url"] is None for f in body["films"])
 
 
+def test_series_and_shorts_are_screened_out(client, export_zip, tmp_path):
+    ranked = client.post("/recommendations?n=4&min_support=1&metadata=false",
+                         files=upload(export_zip)).json()["films"]
+    series, short = ranked[0]["tmdb_id"], ranked[1]["tmdb_id"]
+
+    def handler(request):
+        tmdb_id = int(request.url.path.rsplit("/", 1)[-1])
+        if tmdb_id == series:
+            return httpx.Response(404, json={"status_message": "Not found"})
+        return httpx.Response(200, json={**PARASITE, "runtime": 18 if tmdb_id == short else 120})
+
+    client.app.state.tmdb = TMDBClient(
+        api_key="k", cache=MetadataCache(tmp_path / "m.sqlite"),
+        transport=httpx.MockTransport(handler),
+    )
+    films = client.post("/recommendations?n=2&min_support=1",
+                        files=upload(export_zip)).json()["films"]
+    assert [f["movie_id"] for f in films] == [ranked[2]["movie_id"], ranked[3]["movie_id"]]
+    assert [f["rank"] for f in films] == [1, 2]
+
+    everything = client.post("/recommendations?n=2&min_support=1&shorts_and_tv=true",
+                             files=upload(export_zip)).json()["films"]
+    assert [f["movie_id"] for f in everything] == [f["movie_id"] for f in ranked[:2]]
+
+
 # ---- upload validation --------------------------------------------------
 
 

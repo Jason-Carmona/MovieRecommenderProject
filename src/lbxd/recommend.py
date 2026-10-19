@@ -21,7 +21,7 @@ luck, not design — check it again if you ever swap in a different corpus.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -29,10 +29,18 @@ from .cf import ItemItemCF
 from .letterboxd import Profile
 from .matching import Tier, TitleIndex, match_films
 from .movielens import Movie
+from .tmdb import Metadata
 
 # Below this many matched ratings, item-item CF has too little to work from and
 # its output is mostly noise dressed up as personalisation.
 MIN_RATINGS_FOR_CF = 5
+
+# The Academy's line: forty minutes or less is a short.
+SHORT_FILM_MINUTES = 40
+
+# Series and shorts can only be spotted with TMDB metadata, which arrives after
+# ranking, so callers that filter them ask the model for this many times `n`.
+FEATURE_HEADROOM = 2
 
 
 @dataclass
@@ -179,4 +187,33 @@ def recommend_for_profile(
         matched_ratings=len(positions),
         excluded=seen_count,
         used_fallback=used_fallback,
+    )
+
+
+def is_feature(movie: Movie, metadata: dict[int, Metadata | None]) -> bool:
+    """Whether a film is a feature film, as far as TMDB can say.
+
+    MovieLens lists TV series alongside films (Band of Brothers, Planet Earth)
+    and links them by their TMDB *TV* id, so TMDB's movie endpoint 404s for
+    them. Shorts are ordinary TMDB films with a short runtime: Whiplash (2013)
+    is the 18-minute short the 2014 feature grew out of.
+
+    A film TMDB gave no answer for is kept. An outage should cost posters, not
+    films.
+    """
+    if movie.tmdb_id is None or movie.tmdb_id not in metadata:
+        return True
+    meta = metadata[movie.tmdb_id]
+    if meta is None:
+        return False
+    return meta.runtime is None or meta.runtime > SHORT_FILM_MINUTES
+
+
+def features_only(
+    recs: Recommendations, metadata: dict[int, Metadata | None], n: int
+) -> Recommendations:
+    """The top `n` feature films, re-ranked from 1."""
+    kept = [r for r in recs if is_feature(r.movie, metadata)][:n]
+    return replace(
+        recs, items=[replace(r, rank=rank) for rank, r in enumerate(kept, start=1)]
     )

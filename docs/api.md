@@ -56,6 +56,7 @@ Query parameters, all optional:
 | `hide_watchlist` | false | | also exclude films already on their watchlist |
 | `reject` | — | repeatable | MovieLens ids to drop (see the confirmation flow) |
 | `metadata` | true | | set false to skip TMDB and return faster |
+| `shorts_and_tv` | false | | also recommend TV series and shorts (40 min or less); they can only be screened out when `metadata` is on and TMDB is configured |
 
 ```js
 const form = new FormData();

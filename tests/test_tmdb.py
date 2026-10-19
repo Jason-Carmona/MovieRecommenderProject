@@ -129,14 +129,21 @@ def test_rate_limiting_is_retried_and_honours_retry_after(tmp_path):
     assert responses == []
 
 
-def test_a_failure_degrades_to_none_instead_of_raising(tmp_path):
+def test_a_failure_degrades_to_no_answer_instead_of_raising(tmp_path):
+    calls = []
+
     def handler(request):
+        calls.append(1)
         raise httpx.ConnectError("network down")
 
     client = TMDBClient(api_key="k", cache=MetadataCache(tmp_path / "c.sqlite"),
                         transport=transport(handler))
     # The recommendation list is the product; a poster is decoration.
-    assert asyncio.run(client.fetch_many([496243])) == {496243: None}
+    assert asyncio.run(client.fetch_many([496243])) == {}
+    # Absent, not None: None means TMDB has no such film, and caching an outage
+    # as that would hide a real film for a month.
+    asyncio.run(client.fetch_many([496243]))
+    assert len(calls) == 2 * 3          # asked again, with retries both times
 
 
 def test_bad_credentials_are_not_retried(tmp_path):
