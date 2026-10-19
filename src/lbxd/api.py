@@ -437,7 +437,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             n=n,
             popularity_damping=damping,
             min_support=min_support,
-            max_tier=Tier.YEAR_OFF if strict_matching else Tier.FUZZY,
+            max_tier=Tier.TITLE_ONLY if strict_matching else Tier.FUZZY,
             exclude_watchlist=hide_watchlist,
             reject_ids=set(reject) or None,
         )

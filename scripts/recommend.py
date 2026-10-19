@@ -33,8 +33,11 @@ def main() -> int:
     ap.add_argument("--damping", type=float, default=0.15,
                     help="0 = whatever scores highest, 0.3 = deep cuts")
     ap.add_argument("--min-support", type=int, default=2)
-    ap.add_argument("--strict-matching", action="store_true",
-                    help="refuse fuzzy title matches as model input")
+    # There is nobody here to confirm a "did you mean...?", so uncertain matches
+    # stay out of the model input unless asked for. They still keep the film out
+    # of the results either way.
+    ap.add_argument("--use-uncertain", action="store_true",
+                    help="also feed fuzzy and far-year title matches to the model")
     ap.add_argument("--hide-watchlist", action="store_true",
                     help="also exclude films already on their watchlist")
     args = ap.parse_args()
@@ -48,7 +51,7 @@ def main() -> int:
         n=args.n,
         popularity_damping=args.damping,
         min_support=args.min_support,
-        max_tier=Tier.YEAR_OFF if args.strict_matching else Tier.FUZZY,
+        max_tier=Tier.FUZZY if args.use_uncertain else Tier.TITLE_ONLY,
         exclude_watchlist=args.hide_watchlist,
     )
 

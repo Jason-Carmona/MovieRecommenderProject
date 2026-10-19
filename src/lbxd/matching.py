@@ -36,6 +36,10 @@ _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # Below this ratio a difflib suggestion is noise, not a title.
 FUZZY_CUTOFF = 0.88
 
+# The widest gap between two release years still worth calling the same film.
+# Andrei Rublev spans 1966-1971; past that it is a remake or a namesake.
+MAX_YEAR_DRIFT = 5
+
 
 class Tier(IntEnum):
     """How much to trust a match. Lower is better."""
@@ -85,6 +89,21 @@ def title_variants(raw_title: str) -> list[str]:
     return variants
 
 
+def _query_forms(name: str) -> list[str]:
+    """Normalised forms to look a Letterboxd title up under, best first.
+
+    Letterboxd brackets alternate titles too — "Birdman or (The Unexpected
+    Virtue of Ignorance)" — so the bracketed parts and what remains outside
+    them get looked up as well as the whole name.
+    """
+    forms: list[str] = []
+    for part in [name, _PARENS.sub("", name), *_PARENS.findall(name)]:
+        norm = normalize(part)
+        if norm and norm not in forms:
+            forms.append(norm)
+    return forms
+
+
 @dataclass
 class Match:
     film: Film
@@ -131,7 +150,10 @@ class TitleIndex:
         self._by_year: dict[int | None, set[str]] = defaultdict(set)
 
         for movie in catalog:
-            for variant in title_variants(movie.raw_title):
+            # `title`, not `raw_title`: the raw form ends in "(1917)", which
+            # title_variants would read as an alternate title and index every
+            # film under its own release year.
+            for variant in title_variants(movie.title):
                 self._by_title[variant].append(movie)
                 self._by_year[movie.year].add(variant)
 
@@ -149,12 +171,15 @@ class TitleIndex:
 
     def lookup(self, film: Film, fuzzy: bool = True) -> tuple[Movie, Tier] | None:
         """Best match for one Letterboxd film, or None."""
-        norm = normalize(film.name)
-        if not norm:
+        forms = _query_forms(film.name)
+        if not forms:
             return None
 
-        candidates = self._by_title.get(norm, [])
-        if candidates:
+        far: Movie | None = None
+        for norm in forms:
+            candidates = self._by_title.get(norm, [])
+            if not candidates:
+                continue
             if film.year is None:
                 return candidates[0], Tier.TITLE_ONLY
             for span, tier in ((0, Tier.EXACT), (1, Tier.YEAR_OFF)):
@@ -174,27 +199,40 @@ class TitleIndex:
             # released in the USSR in 1971, and Letterboxd and MovieLens picked
             # different ones. Refusing the match is not the safe option — an
             # unmatched film the user has *seen* never makes it onto the exclude
-            # list, so the model cheerfully recommends it back to them. Match it,
-            # but mark it uncertain so the UI can ask.
-            dated = [m for m in candidates if m.year is not None]
-            if dated:
-                closest = min(dated, key=lambda m: abs(m.year - film.year))
-                return closest, Tier.YEAR_FAR
+            # list, so the model cheerfully recommends it back to them. Keep it
+            # as a fallback, marked uncertain so the UI can ask.
+            #
+            # Past MAX_YEAR_DRIFT it is a remake or a namesake, not a disputed
+            # date: "Nosferatu (2024)" is not the 1922 film, and calling it one
+            # feeds the model a rating for a film the user never saw.
+            dated = [
+                m for m in candidates
+                if m.year is not None and abs(m.year - film.year) <= MAX_YEAR_DRIFT
+            ]
+            if dated and far is None:
+                far = min(dated, key=lambda m: abs(m.year - film.year))
 
-        if not fuzzy:
-            return None
+        # A near-miss title from the right year beats the exact title from the
+        # wrong one: Letterboxd's "Oldboy (2003)" is MovieLens's "Old Boy (2003)",
+        # not the 2013 remake that happens to share its spelling.
+        if fuzzy:
+            hit = self._fuzzy(forms[0], film.year)
+            if hit is not None:
+                return hit, Tier.FUZZY
+        if far is not None:
+            return far, Tier.YEAR_FAR
+        return None
 
+    def _fuzzy(self, norm: str, year: int | None) -> Movie | None:
         # Restrict fuzzy search to plausible release years so we compare against
         # hundreds of titles rather than ninety thousand.
-        pool = self._year_window(film.year, span=1)
+        pool = self._year_window(year, span=1)
         close = difflib.get_close_matches(norm, pool, n=1, cutoff=FUZZY_CUTOFF)
         if not close:
             return None
         for movie in self._by_title[close[0]]:
-            if film.year is None or movie.year is None:
-                return movie, Tier.FUZZY
-            if abs(movie.year - film.year) <= 1:
-                return movie, Tier.FUZZY
+            if year is None or movie.year is None or abs(movie.year - year) <= 1:
+                return movie
         return None
 
 

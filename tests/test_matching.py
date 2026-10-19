@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lbxd.letterboxd import Film, load_export  # noqa: E402
 from lbxd.matching import Tier, TitleIndex, match_films, normalize, title_variants  # noqa: E402
-from lbxd.movielens import load_catalog  # noqa: E402
+from lbxd.movielens import Movie, load_catalog  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -131,3 +131,37 @@ def test_an_exact_year_still_wins_over_a_far_one(index):
     """The remake guard must survive the new fallback."""
     assert index.lookup(Film("The Thing", 1982))[0].movie_id == 4
     assert index.lookup(Film("The Thing", 2011))[0].movie_id == 5
+
+
+def _index(*raw_titles):
+    """A TitleIndex over hand-written MovieLens titles, ids counting from 1."""
+    movies = []
+    for mid, raw in enumerate(raw_titles, start=1):
+        title, _, year = raw.rpartition(" (")
+        movies.append(Movie(mid, raw, title, int(year.rstrip(")"))))
+    return TitleIndex(movies)
+
+
+def test_release_year_is_not_indexed_as_a_title(index):
+    """'Matrix, The (1999)' must not be findable as a film called '1999'."""
+    assert index.lookup(Film("1999", 1999)) is None
+    assert _index("Immigrant, The (1917)").lookup(Film("1917", 2019)) is None
+
+
+def test_same_year_near_miss_beats_a_far_year_namesake():
+    """Letterboxd's 'Oldboy' is MovieLens's 'Old Boy'; the exact spelling
+    belongs to the 2013 remake. Settling for the remake left the 2003 film
+    off the exclude list and it got recommended back."""
+    movie, tier = _index("Old Boy (2003)", "Oldboy (2013)").lookup(Film("Oldboy", 2003))
+    assert movie.movie_id == 1 and tier == Tier.FUZZY
+
+
+def test_letterboxd_bracketed_titles_are_split():
+    index = _index("Birdman: Or (The Unexpected Virtue of Ignorance) (2014)")
+    movie, tier = index.lookup(Film("Birdman or (The Unexpected Virtue of Ignorance)", 2014))
+    assert movie.movie_id == 1 and tier == Tier.EXACT
+
+
+def test_a_remake_decades_apart_is_not_a_contested_year():
+    index = _index("Nosferatu (Nosferatu, eine Symphonie des Grauens) (1922)")
+    assert index.lookup(Film("Nosferatu", 2024)) is None
