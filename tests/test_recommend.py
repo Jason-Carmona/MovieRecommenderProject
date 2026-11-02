@@ -7,8 +7,11 @@ from lbxd import synthetic
 from lbxd.cf import ItemItemCF
 from lbxd.letterboxd import Film, Profile, load_export
 from lbxd.matching import Tier, TitleIndex
-from lbxd.movielens import load_catalog
-from lbxd.recommend import recommend_for_profile
+from lbxd.movielens import Movie, load_catalog
+from lbxd.recommend import (
+    Recommendation, Recommendations, features_only, is_feature, recommend_for_profile,
+)
+from lbxd.tmdb import Metadata
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -221,3 +224,40 @@ def test_display_titles_are_presentable(catalog):
     by_id = {m.movie_id: m for m in catalog}
     assert by_id[1].display == "The Matrix"
     assert by_id[8].display == "Seven"
+
+
+def _film(mid, tmdb_id):
+    return Movie(mid, f"Film {mid} (2000)", f"Film {mid}", 2000, tmdb_id=tmdb_id)
+
+
+def test_series_and_shorts_are_not_features():
+    metadata = {
+        1: Metadata(1, runtime=107),   # a feature
+        2: None,                       # TMDB has no film by this id: a series
+        3: Metadata(3, runtime=18),    # Whiplash (2013), the short
+        4: Metadata(4, runtime=40),    # the Academy counts 40 minutes as short
+        5: Metadata(5, runtime=None),  # unknown runtime: no evidence
+    }
+    assert [is_feature(_film(i, i), metadata) for i in range(1, 6)] == [
+        True, False, False, False, True,
+    ]
+
+
+def test_a_film_tmdb_never_answered_for_is_kept():
+    """An outage, or no TMDB id at all, should cost posters, not films."""
+    assert is_feature(_film(1, 1), {})
+    assert is_feature(_film(1, None), {})
+
+
+def test_features_only_trims_to_n_and_reranks():
+    films = [_film(i, i) for i in range(1, 6)]
+    recs = Recommendations(
+        items=[Recommendation(f, 1.0 - f.movie_id / 10, f.movie_id) for f in films],
+        matched_ratings=10, excluded=3, used_fallback=False,
+    )
+    metadata = {1: None, 3: Metadata(3, runtime=12)}
+
+    out = features_only(recs, metadata, n=2)
+
+    assert [(r.movie.movie_id, r.rank) for r in out] == [(2, 1), (4, 2)]
+    assert (out.matched_ratings, out.excluded) == (10, 3)

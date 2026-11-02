@@ -48,7 +48,7 @@ from .cf import ItemItemCF
 from .letterboxd import Profile, load_export
 from .matching import Tier, TitleIndex, match_films
 from .movielens import Movie, load_catalog
-from .recommend import recommend_for_profile
+from .recommend import FEATURE_HEADROOM, features_only, recommend_for_profile
 from .tmdb import MetadataCache, TMDBClient
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -426,23 +426,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "to /match, for titles we matched wrongly",
         ),
         metadata: bool = Query(True, description="attach TMDB posters and details"),
+        shorts_and_tv: bool = Query(
+            False, description="also recommend TV series and short films",
+        ),
     ) -> RecommendationsOut:
         """Recommend films the user has not seen."""
         model, index, catalog = _require_ready(request)
         profile = await _profile_from_upload(export)
 
+        client: TMDBClient = request.app.state.tmdb
+        # Telling a series or a short from a feature takes TMDB's answer, so
+        # with metadata off (or no key) everything the model ranks goes through.
+        screen = metadata and client.enabled and not shorts_and_tv
+
         recs = await asyncio.to_thread(
             recommend_for_profile,
             profile, model, index, catalog,
-            n=n,
+            n=n * FEATURE_HEADROOM if screen else n,
             popularity_damping=damping,
             min_support=min_support,
-            max_tier=Tier.YEAR_OFF if strict_matching else Tier.FUZZY,
+            max_tier=Tier.TITLE_ONLY if strict_matching else Tier.FUZZY,
             exclude_watchlist=hide_watchlist,
             reject_ids=set(reject) or None,
         )
 
-        client: TMDBClient = request.app.state.tmdb
         extras = {}
         if metadata and client.enabled:
             # The only genuinely I/O-bound step, and the one place where staying
@@ -450,6 +457,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             extras = await client.fetch_many(
                 [r.movie.tmdb_id for r in recs if r.movie.tmdb_id]
             )
+        if screen:
+            recs = features_only(recs, extras, n)
 
         films = []
         for rec in recs:

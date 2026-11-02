@@ -52,6 +52,12 @@ REQUEST_TIMEOUT = 10.0
 MAX_RETRIES = 3
 
 
+# What _fetch_one returns when TMDB never gave an answer (timeouts, 5xx, a bad
+# key), as opposed to None for a 404. Only a 404 says anything about the film,
+# so only a 404 is cached as a miss.
+_NO_ANSWER = object()
+
+
 @dataclass
 class Metadata:
     """What a web page needs to render one film."""
@@ -202,8 +208,8 @@ class TMDBClient:
 
     async def _fetch_one(
         self, client: httpx.AsyncClient, tmdb_id: int
-    ) -> Metadata | None:
-        """One film. Returns None for "no metadata", never raises."""
+    ) -> Metadata | None | object:
+        """One film: Metadata, None for a 404, or _NO_ANSWER. Never raises."""
         async with self.semaphore:
             for attempt in range(MAX_RETRIES):
                 try:
@@ -212,7 +218,7 @@ class TMDBClient:
                     )
                 except (httpx.TimeoutException, httpx.TransportError):
                     if attempt == MAX_RETRIES - 1:
-                        return None
+                        return _NO_ANSWER
                     await asyncio.sleep(0.5 * 2 ** attempt)   # exponential backoff
                     continue
 
@@ -220,7 +226,7 @@ class TMDBClient:
                     try:
                         return _parse(tmdb_id, response.json())
                     except (ValueError, KeyError, TypeError):
-                        return None
+                        return _NO_ANSWER
 
                 if response.status_code == 429:
                     # TMDB tells us how long to wait; guessing is how you get
@@ -236,11 +242,15 @@ class TMDBClient:
                     await asyncio.sleep(0.5 * 2 ** attempt)
                     continue
 
-                return None              # 401/403: bad key, retrying won't help
-            return None
+                return _NO_ANSWER        # 401/403: bad key, retrying won't help
+            return _NO_ANSWER
 
     async def fetch_many(self, tmdb_ids: list[int]) -> dict[int, Metadata | None]:
-        """Metadata for a list of TMDB ids. Cache first, network for the rest."""
+        """Metadata for a list of TMDB ids. Cache first, network for the rest.
+
+        A key mapped to None means TMDB has no film by that id. A missing key
+        means nobody knows: TMDB is off, down, or refused the request.
+        """
         wanted = [int(i) for i in dict.fromkeys(tmdb_ids) if i]   # dedupe, keep order
         if not wanted:
             return {}
@@ -259,7 +269,8 @@ class TMDBClient:
                 *(self._fetch_one(client, i) for i in missing)
             )
 
-        fetched = dict(zip(missing, results))
+        # Caching a timeout as a miss would hide a real film for a month.
+        fetched = {i: r for i, r in zip(missing, results) if r is not _NO_ANSWER}
         if self.cache:
             self.cache.put_many(fetched)
         return {**cached, **fetched}
