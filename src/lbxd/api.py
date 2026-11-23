@@ -42,6 +42,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .cf import ItemItemCF
@@ -344,6 +345,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        # shortcut: single static page for the POC, replace with the real web UI
+        return FileResponse(Path(__file__).with_name("index.html"))
 
     @app.get("/health", response_model=HealthOut)
     async def health(request: Request) -> HealthOut:
