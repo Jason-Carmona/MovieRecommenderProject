@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>letterboxd-recs</title>
+<style>
+  body { font: 15px system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+  #films { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; padding: 0; list-style: none; }
+  #films img, .noposter { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #ddd; border-radius: 4px; }
+  .muted { color: #666; font-size: 13px; }
+  #status[data-error] { color: #b00; }
+</style>
+</head>
+<body>
+<h1>letterboxd-recs</h1>
+<form id="form">
+  <label>Letterboxd export (.zip) <input type="file" name="export" accept=".zip" required></label>
+  <button>Recommend</button>
+</form>
+<p id="status" role="status"></p>
+<ol id="films"></ol>
+<script>
+const form = document.getElementById("form");
+const status = document.getElementById("status");
+const list = document.getElementById("films");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  list.replaceChildren();
+  status.removeAttribute("data-error");
+  status.textContent = "Working… (first run fetches posters, give it a few seconds)";
+  try {
+    const res = await fetch("recommendations?n=20", { method: "POST", body: new FormData(form) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    status.textContent = data.used_fallback
+      ? "Too few matched ratings to personalise, so these are popular films."
+      : `Based on ${data.usable_ratings} of your ratings.`;
+    for (const f of data.films) {
+      const li = document.createElement("li");
+      const img = document.createElement(f.poster_url ? "img" : "div");
+      if (f.poster_url) { img.src = f.poster_url; img.alt = ""; } else img.className = "noposter";
+      const title = document.createElement("div");
+      title.textContent = `${f.rank}. ${f.title}${f.year ? ` (${f.year})` : ""}`;
+      const meta = document.createElement("div");
+      meta.className = "muted";
+      meta.textContent = f.director || f.genres.join(", ");
+      li.append(img, title, meta);
+      list.append(li);
+    }
+  } catch (err) {
+    status.dataset.error = "";
+    status.textContent = `Error: ${err.message}`;
+  }
+});
+</script>
+</body>
+</html>

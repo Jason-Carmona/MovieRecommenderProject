@@ -83,6 +83,12 @@ def export_zip():
 # ---- readiness ----------------------------------------------------------
 
 
+def test_root_serves_the_upload_page(client):
+    res = client.get("/")
+    assert res.status_code == 200
+    assert 'type="file"' in res.text
+
+
 def test_health_reports_ready_when_artifacts_loaded(client):
     body = client.get("/health").json()
     assert body["ready"] is True
